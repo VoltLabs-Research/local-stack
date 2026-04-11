@@ -1,13 +1,3 @@
-# Local Stack
-
-This repository is intended to live as a standalone `local-stack` repo.
-
-It does three things:
-
-1. Creates a `volt-dev/` workspace in your current directory.
-2. Clones `local-stack`, `Volt`, and `ClusterDaemon` into that workspace.
-3. Starts a standalone Docker-based Volt development stack from those local checkouts.
-
 ## Quick Start
 
 Run the bootstrap script directly from GitHub:
@@ -37,17 +27,9 @@ If `local-stack` is already checked out:
 ```bash
 cd ./volt-dev
 ./local-stack/bootstrap-workspace.sh
-./local-stack/stack.sh up
-```
 
-## Common Commands
-
-```bash
-cd ./volt-dev
-./local-stack/stack.sh up
 ./local-stack/stack.sh down
 ./local-stack/stack.sh reset
-./local-stack/stack.sh logs
 ./local-stack/stack.sh ps
 ```
 
