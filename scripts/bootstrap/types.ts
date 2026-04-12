@@ -51,11 +51,6 @@ export interface ClusterPorts {
     daemon: number;
 }
 
-export interface JupyterHostPortRange {
-    start: number;
-    end: number;
-}
-
 export interface ClusterConfig {
     key: 'storage' | 'compute';
     servicePrefix: string;
@@ -63,13 +58,13 @@ export interface ClusterConfig {
     name: string;
     installRoot: string;
     ports: ClusterPorts;
-    jupyterHostPortRange: JupyterHostPortRange;
 }
 
 export interface BootstrapConfig {
     apiUrl: string;
     internalApiUrl: string;
     webUrl: string;
+    composeProjectName: string;
     daemonNodeEnv: 'development' | 'production';
     outputDirectory: string;
     timeoutMs: number;

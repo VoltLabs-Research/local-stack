@@ -187,6 +187,7 @@ TEAM_CLUSTER_BINARY_RELAY_ADVERTISED_HOST=volt-server
 SERVER_HOST=0.0.0.0
 SERVER_HOSTNAME=localhost
 SERVER_SCHEMA=http
+TEAM_CLUSTER_APP_PROXY_BIND_HOST=0.0.0.0
 CLIENT_HOST=${PUBLIC_WEB_URL}
 CLIENT_DEV_HOST=${PUBLIC_WEB_URL}
 MONGO_URI=mongodb://volt:volt@volt-mongodb:27017?authSource=admin
@@ -390,6 +391,17 @@ docker_compose_all() {
     docker compose --project-directory "${STACK_ROOT}" -p "${PROJECT_NAME}" -f "${BASE_COMPOSE_FILE}" -f "${GENERATED_CLUSTER_COMPOSE_FILE}" "$@"
 }
 
+cleanup_managed_runtime_containers() {
+    local managed_container_ids
+    managed_container_ids="$(docker ps -aq --filter label=volt.managed=true)"
+
+    if [[ -z "${managed_container_ids}" ]]; then
+        return 0
+    fi
+
+    docker rm -f ${managed_container_ids} >/dev/null
+}
+
 base_up_services() {
     local services=(
         volt-mongodb
@@ -418,6 +430,7 @@ cluster_up_services() {
 }
 
 run_bootstrap_provision() {
+    VOLT_DEV_STACK_PROJECT_NAME="${PROJECT_NAME}" \
     VOLT_DEV_PUBLIC_API_URL="${PUBLIC_API_URL}" \
     VOLT_DEV_PUBLIC_WEB_URL="${PUBLIC_WEB_URL}" \
     VOLT_DEV_INTERNAL_API_URL="${INTERNAL_API_URL}" \
@@ -427,6 +440,7 @@ run_bootstrap_provision() {
 }
 
 run_bootstrap_wait_cluster() {
+    VOLT_DEV_STACK_PROJECT_NAME="${PROJECT_NAME}" \
     VOLT_DEV_PUBLIC_API_URL="${PUBLIC_API_URL}" \
     VOLT_DEV_PUBLIC_WEB_URL="${PUBLIC_WEB_URL}" \
     VOLT_DEV_INTERNAL_API_URL="${INTERNAL_API_URL}" \
@@ -450,6 +464,7 @@ prepare_stack_state() {
 
 cmd_up() {
     prepare_stack_state
+    cleanup_managed_runtime_containers
 
     mapfile -t base_services < <(base_up_services)
     docker_compose_base up -d --build --remove-orphans "${base_services[@]}"
@@ -465,11 +480,13 @@ cmd_up() {
 
 cmd_down() {
     prepare_stack_state
+    cleanup_managed_runtime_containers
     docker_compose_all down --remove-orphans
 }
 
 cmd_reset() {
     prepare_stack_state
+    cleanup_managed_runtime_containers
     docker_compose_all down --volumes --remove-orphans
     rm -rf "${GENERATED_DIR}"
 }

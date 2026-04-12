@@ -55,6 +55,7 @@ services:
         condition: service_started
     ports:
       - "8000:8000"
+      - "24000-24999:24000-24999"
     volumes:
       - "${VOLT_DEV_VOLT_SERVER_DIR}:/app"
       - /app/node_modules

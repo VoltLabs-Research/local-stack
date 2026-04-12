@@ -63,7 +63,6 @@ const createClusterConfig = (input: {
     name: string;
     installRoot: string;
     ports: ClusterConfig['ports'];
-    jupyterHostPortRange: ClusterConfig['jupyterHostPortRange'];
 }): ClusterConfig => {
     return {
         key: input.key,
@@ -71,8 +70,7 @@ const createClusterConfig = (input: {
         role: input.role,
         name: input.name,
         installRoot: input.installRoot,
-        ports: input.ports,
-        jupyterHostPortRange: input.jupyterHostPortRange
+        ports: input.ports
     };
 };
 
@@ -95,6 +93,7 @@ export const createBootstrapConfig = (input: {
         apiUrl: readFirstText(options.apiUrl, env.VOLT_DEV_PUBLIC_API_URL) || 'http://localhost:8000',
         internalApiUrl: readFirstText(options.internalApiUrl, env.VOLT_DEV_INTERNAL_API_URL) || 'http://volt-server:8000',
         webUrl: readFirstText(options.webUrl, env.VOLT_DEV_PUBLIC_WEB_URL) || 'http://localhost:5173',
+        composeProjectName: readFirstText(options.stackProjectName, env.VOLT_DEV_STACK_PROJECT_NAME) || 'volt-dev',
         daemonNodeEnv: daemonNodeEnv === 'development' ? 'development' : 'production',
         outputDirectory: path.resolve(
             readFirstText(options.outputDir, env.VOLT_DEV_CLUSTER_OUTPUT_DIR) || defaultOutputDirectory
@@ -168,10 +167,6 @@ export const createBootstrapConfig = (input: {
                         env.VOLT_DEV_CLUSTER_DAEMON_PORT,
                         8080
                     )
-                },
-                jupyterHostPortRange: {
-                    start: 25000,
-                    end: 25049
                 }
             }),
             createClusterConfig({
@@ -211,10 +206,6 @@ export const createBootstrapConfig = (input: {
                         env.VOLT_DEV_COMPUTE_CLUSTER_DAEMON_PORT,
                         8081
                     )
-                },
-                jupyterHostPortRange: {
-                    start: 25050,
-                    end: 25099
                 }
             })
         ]
