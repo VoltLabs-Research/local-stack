@@ -1,0 +1,16 @@
+services:
+  storage-daemon:
+    build:
+      context: "${VOLT_DEV_CLUSTER_DAEMON_SOURCE_DIR}"
+      dockerfile: Dockerfile.dev
+    volumes:
+      - "${VOLT_DEV_CLUSTER_DAEMON_SOURCE_DIR}:/app"
+      - /app/node_modules
+
+  compute-daemon:
+    build:
+      context: "${VOLT_DEV_CLUSTER_DAEMON_SOURCE_DIR}"
+      dockerfile: Dockerfile.dev
+    volumes:
+      - "${VOLT_DEV_CLUSTER_DAEMON_SOURCE_DIR}:/app"
+      - /app/node_modules

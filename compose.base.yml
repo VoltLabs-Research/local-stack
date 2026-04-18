@@ -44,8 +44,43 @@ services:
       context: "${VOLT_DEV_VOLT_SERVER_DIR}"
       dockerfile: Dockerfile.dev
     restart: unless-stopped
-    env_file:
-      - ./.generated/server.env
+    environment:
+      NODE_ENV: development
+      LOG_LEVEL: info
+      REDIS_HOST: volt-redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: voltredis
+      MINIO_ENDPOINT: volt-minio
+      MINIO_PORT: 9000
+      MINIO_USE_SSL: "false"
+      MINIO_ACCESS_KEY: voltminio
+      MINIO_SECRET_KEY: voltminiosecret
+      MINIO_PUBLIC_URL: "${VOLT_DEV_PUBLIC_MINIO_URL}"
+      SERVER_ENDPOINT: "${VOLT_DEV_PUBLIC_API_URL}"
+      SERVER_PORT: 8000
+      TEAM_CLUSTER_BINARY_RELAY_ENABLED: "false"
+      TEAM_CLUSTER_OBJECT_GATEWAY_BINARY_RELAY_ENABLED: "false"
+      TEAM_CLUSTER_BINARY_RELAY_ENDPOINT: "${VOLT_DEV_INTERNAL_API_URL}"
+      TEAM_CLUSTER_BINARY_RELAY_ADVERTISED_HOST: volt-server
+      SERVER_HOST: 0.0.0.0
+      SERVER_HOSTNAME: localhost
+      SERVER_SCHEMA: http
+      TEAM_CLUSTER_APP_PROXY_BIND_HOST: 0.0.0.0
+      CLIENT_HOST: "${VOLT_DEV_PUBLIC_WEB_URL}"
+      CLIENT_DEV_HOST: "${VOLT_DEV_PUBLIC_WEB_URL}"
+      MONGO_URI: mongodb://volt:volt@volt-mongodb:27017?authSource=admin
+      MONGO_AUTH_SOURCE: admin
+      PRODUCTION_DATABASE: voltcloud@production
+      DEVELOPMENT_DATABASE: voltcloud@development
+      SSH_ENCRYPTION_KEY: volt-dev-ssh-key
+      JWT_EXPIRATION_DAYS: 7d
+      SECRET_KEY: volt-dev-secret-key
+      TEAM_CLUSTER_TCP_RELAY_BIND_HOST: 0.0.0.0
+      TEAM_CLUSTER_TCP_RELAY_ADVERTISED_HOST: volt-server
+      TEAM_CLUSTER_TCP_RELAY_PORT_START: 23000
+      TEAM_CLUSTER_TCP_RELAY_PORT_END: 23999
+      TEAM_CLUSTER_TAILSCALE_ENABLED: "false"
+      TEAM_CLUSTER_TAILSCALE_REQUIRED: "false"
     depends_on:
       volt-mongodb:
         condition: service_healthy
@@ -65,9 +100,10 @@ services:
       context: "${VOLT_DEV_VOLT_CLIENT_DIR}"
       dockerfile: Dockerfile.dev
     restart: unless-stopped
-    env_file:
-      - ./.generated/client.env
     environment:
+      VITE_ENV: development
+      VITE_API_URL: "${VOLT_DEV_PUBLIC_API_URL}"
+      VITE_PROXY_API_URL: "${VOLT_DEV_INTERNAL_API_URL}"
       CHOKIDAR_USEPOLLING: "true"
       WATCHPACK_POLLING: "true"
     depends_on:

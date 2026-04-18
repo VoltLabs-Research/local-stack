@@ -1,0 +1,124 @@
+services:
+  storage-mongodb:
+    image: mongo:8.0.5
+    restart: unless-stopped
+    env_file:
+      - ./.generated/clusters/storage/mongodb.env
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --host localhost --username $$MONGO_INITDB_ROOT_USERNAME --password $$MONGO_INITDB_ROOT_PASSWORD --authenticationDatabase admin --eval \"db.adminCommand('ping').ok\" | grep 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - storage-mongodb-data:/data/db
+
+  storage-redis:
+    image: redis:7.4.2-alpine
+    restart: unless-stopped
+    env_file:
+      - ./.generated/clusters/storage/redis.env
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --aclfile
+      - /usr/local/etc/redis/users.acl
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --user $$REDIS_USERNAME --pass $$REDIS_PASSWORD ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - storage-redis-data:/data
+      - ./.generated/clusters/storage/redis.acl:/usr/local/etc/redis/users.acl:ro
+
+  storage-minio:
+    image: minio/minio:RELEASE.2025-02-28T09-55-16Z
+    restart: unless-stopped
+    env_file:
+      - ./.generated/clusters/storage/minio.env
+    command: server /data --console-address ":9001"
+    volumes:
+      - storage-minio-data:/data
+
+  storage-daemon:
+    restart: unless-stopped
+    env_file:
+      - ./.generated/clusters/storage/daemon.env
+    depends_on:
+      storage-mongodb:
+        condition: service_healthy
+      storage-redis:
+        condition: service_healthy
+      storage-minio:
+        condition: service_started
+      volt-server:
+        condition: service_started
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  compute-mongodb:
+    image: mongo:8.0.5
+    restart: unless-stopped
+    env_file:
+      - ./.generated/clusters/compute/mongodb.env
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --host localhost --username $$MONGO_INITDB_ROOT_USERNAME --password $$MONGO_INITDB_ROOT_PASSWORD --authenticationDatabase admin --eval \"db.adminCommand('ping').ok\" | grep 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - compute-mongodb-data:/data/db
+
+  compute-redis:
+    image: redis:7.4.2-alpine
+    restart: unless-stopped
+    env_file:
+      - ./.generated/clusters/compute/redis.env
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --aclfile
+      - /usr/local/etc/redis/users.acl
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --user $$REDIS_USERNAME --pass $$REDIS_PASSWORD ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - compute-redis-data:/data
+      - ./.generated/clusters/compute/redis.acl:/usr/local/etc/redis/users.acl:ro
+
+  compute-minio:
+    image: minio/minio:RELEASE.2025-02-28T09-55-16Z
+    restart: unless-stopped
+    env_file:
+      - ./.generated/clusters/compute/minio.env
+    command: server /data --console-address ":9001"
+    volumes:
+      - compute-minio-data:/data
+
+  compute-daemon:
+    restart: unless-stopped
+    env_file:
+      - ./.generated/clusters/compute/daemon.env
+    depends_on:
+      compute-mongodb:
+        condition: service_healthy
+      compute-redis:
+        condition: service_healthy
+      compute-minio:
+        condition: service_started
+      volt-server:
+        condition: service_started
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  storage-mongodb-data:
+  storage-redis-data:
+  storage-minio-data:
+  compute-mongodb-data:
+  compute-redis-data:
+  compute-minio-data:

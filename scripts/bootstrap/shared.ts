@@ -1,11 +1,8 @@
+export { setTimeout as sleep } from 'node:timers/promises';
+
 export const trimTrailingSlash = (value: string): string => value.replace(/\/+$/g, '');
 
 export const normalizeName = (value: string): string => value.trim().toLowerCase();
-
-export const sleep = (ms: number): Promise<void> =>
-    new Promise((resolve) => {
-        setTimeout(resolve, ms);
-    });
 
 export const readString = (value: unknown, context: string): string => {
     if (typeof value !== 'string' || value.trim().length === 0) {

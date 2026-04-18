@@ -1,0 +1,33 @@
+{
+  "generatedAt": "2026-04-17T00:22:30.200Z",
+  "user": {
+    "email": "dev@volt.local"
+  },
+  "team": {
+    "id": "69e02eb2b960f195d00b882e",
+    "name": "Volt Dev Team"
+  },
+  "clusters": [
+    {
+      "key": "storage",
+      "role": "storage-server",
+      "id": "69e02eb2b960f195d00b8846",
+      "name": "Local Dev Storage Server",
+      "status": "disconnected",
+      "envDirectory": "storage"
+    },
+    {
+      "key": "compute",
+      "role": "compute-node",
+      "id": "69e02eb3b960f195d00b8866",
+      "name": "Local Dev Compute Node",
+      "status": "disconnected",
+      "envDirectory": "compute"
+    }
+  ],
+  "urls": {
+    "api": "http://localhost:8000",
+    "web": "http://localhost:5173",
+    "internalApi": "http://volt-server:8000"
+  }
+}

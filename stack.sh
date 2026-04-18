@@ -26,7 +26,10 @@ CLUSTERS_GENERATED_DIR="${GENERATED_DIR}/clusters"
 STORAGE_CLUSTER_GENERATED_DIR="${CLUSTERS_GENERATED_DIR}/storage"
 COMPUTE_CLUSTER_GENERATED_DIR="${CLUSTERS_GENERATED_DIR}/compute"
 BASE_COMPOSE_FILE="${STACK_ROOT}/compose.base.yml"
-GENERATED_CLUSTER_COMPOSE_FILE="${GENERATED_DIR}/compose.cluster.yml"
+CLUSTER_COMPOSE_FILE="${STACK_ROOT}/compose.cluster.base.yml"
+CLUSTER_REMOTE_COMPOSE_FILE="${STACK_ROOT}/compose.cluster.remote.yml"
+CLUSTER_SOURCE_COMPOSE_FILE="${STACK_ROOT}/compose.cluster.source.yml"
+CLUSTER_COMPOSE_MODE_FILE="${CLUSTER_REMOTE_COMPOSE_FILE}"
 
 export VOLT_DEV_VOLT_SERVER_DIR="${VOLT_SERVER_ROOT}"
 export VOLT_DEV_VOLT_CLIENT_DIR="${VOLT_CLIENT_ROOT}"
@@ -40,6 +43,12 @@ MINIO_CONSOLE_HOST_PORT="${VOLT_DEV_MINIO_CONSOLE_PORT:-9001}"
 PUBLIC_MINIO_URL="${VOLT_DEV_PUBLIC_MINIO_URL:-http://localhost:${MINIO_HOST_PORT}}"
 DEFAULT_CLUSTER_DAEMON_IMAGE="ghcr.io/voltlabs-research/volt-cluster-daemon:main"
 CLUSTER_DAEMON_IMAGE="${VOLT_DEV_CLUSTER_DAEMON_IMAGE:-${DEFAULT_CLUSTER_DAEMON_IMAGE}}"
+
+export VOLT_DEV_PUBLIC_API_URL="${PUBLIC_API_URL}"
+export VOLT_DEV_PUBLIC_WEB_URL="${PUBLIC_WEB_URL}"
+export VOLT_DEV_INTERNAL_API_URL="${INTERNAL_API_URL}"
+export VOLT_DEV_PUBLIC_MINIO_URL="${PUBLIC_MINIO_URL}"
+export VOLT_DEV_CLUSTER_DAEMON_IMAGE="${CLUSTER_DAEMON_IMAGE}"
 
 if [[ -n "${VOLT_DEV_CLUSTER_DAEMON_PATH:-}" ]]; then
     CLUSTER_DAEMON_PATH_INPUT="${VOLT_DEV_CLUSTER_DAEMON_PATH}"
@@ -82,12 +91,6 @@ ensure_tools() {
         echo "Expected ${VOLT_CLIENT_ROOT}/Dockerfile.dev. Run ${BOOTSTRAP_WORKSPACE_SCRIPT} in the workspace root, or set VOLT_DEV_WORKSPACE_DIR." >&2
         exit 1
     }
-}
-
-yaml_quote() {
-    local value="$1"
-    value="${value//\'/\'\'}"
-    printf "'%s'" "${value}"
 }
 
 resolve_cluster_daemon_path() {
@@ -163,224 +166,19 @@ EOF
     [[ -f "${cluster_dir}/daemon.env" ]] || : > "${cluster_dir}/daemon.env"
 }
 
-write_base_envs() {
-    ensure_generated_layout
+configure_cluster_daemon_compose() {
+    CLUSTER_COMPOSE_MODE_FILE="${CLUSTER_REMOTE_COMPOSE_FILE}"
 
-    cat > "${GENERATED_DIR}/server.env" <<EOF
-NODE_ENV=development
-LOG_LEVEL=info
-REDIS_HOST=volt-redis
-REDIS_PORT=6379
-REDIS_PASSWORD=voltredis
-MINIO_ENDPOINT=volt-minio
-MINIO_PORT=9000
-MINIO_USE_SSL=false
-MINIO_ACCESS_KEY=voltminio
-MINIO_SECRET_KEY=voltminiosecret
-MINIO_PUBLIC_URL=${PUBLIC_MINIO_URL}
-SERVER_ENDPOINT=${PUBLIC_API_URL}
-SERVER_PORT=8000
-TEAM_CLUSTER_BINARY_RELAY_ENABLED=false
-TEAM_CLUSTER_OBJECT_GATEWAY_BINARY_RELAY_ENABLED=false
-TEAM_CLUSTER_BINARY_RELAY_ENDPOINT=${INTERNAL_API_URL}
-TEAM_CLUSTER_BINARY_RELAY_ADVERTISED_HOST=volt-server
-SERVER_HOST=0.0.0.0
-SERVER_HOSTNAME=localhost
-SERVER_SCHEMA=http
-TEAM_CLUSTER_APP_PROXY_BIND_HOST=0.0.0.0
-CLIENT_HOST=${PUBLIC_WEB_URL}
-CLIENT_DEV_HOST=${PUBLIC_WEB_URL}
-MONGO_URI=mongodb://volt:volt@volt-mongodb:27017?authSource=admin
-MONGO_AUTH_SOURCE=admin
-PRODUCTION_DATABASE=voltcloud@production
-DEVELOPMENT_DATABASE=voltcloud@development
-SSH_ENCRYPTION_KEY=volt-dev-ssh-key
-JWT_EXPIRATION_DAYS=7d
-SECRET_KEY=volt-dev-secret-key
-TEAM_CLUSTER_TCP_RELAY_BIND_HOST=0.0.0.0
-TEAM_CLUSTER_TCP_RELAY_ADVERTISED_HOST=volt-server
-TEAM_CLUSTER_TCP_RELAY_PORT_START=23000
-TEAM_CLUSTER_TCP_RELAY_PORT_END=23999
-TEAM_CLUSTER_TAILSCALE_ENABLED=false
-TEAM_CLUSTER_TAILSCALE_REQUIRED=false
-EOF
-
-    cat > "${GENERATED_DIR}/client.env" <<EOF
-VITE_ENV=development
-VITE_API_URL=${PUBLIC_API_URL}
-VITE_PROXY_API_URL=${INTERNAL_API_URL}
-EOF
-}
-
-write_cluster_compose() {
-    ensure_generated_layout
-
-    local daemon_definition=''
-    local daemon_mounts=''
-
-    if [[ -n "${CLUSTER_DAEMON_PATH_INPUT}" ]]; then
-        local cluster_daemon_source_path
-        cluster_daemon_source_path="$(resolve_cluster_daemon_path "${CLUSTER_DAEMON_PATH_INPUT}")"
-        assert_cluster_daemon_source_layout "${cluster_daemon_source_path}"
-
-        local build_context
-        local source_mount
-        build_context="$(yaml_quote "${cluster_daemon_source_path}")"
-        source_mount="$(yaml_quote "${cluster_daemon_source_path}:/app")"
-
-        daemon_definition=$(cat <<EOF
-    build:
-      context: ${build_context}
-      dockerfile: Dockerfile.dev
-EOF
-)
-
-        daemon_mounts=$(cat <<EOF
-      - ${source_mount}
-      - /app/node_modules
-      - /var/run/docker.sock:/var/run/docker.sock
-EOF
-)
-    else
-        daemon_definition=$(cat <<EOF
-    image: ${CLUSTER_DAEMON_IMAGE}
-EOF
-)
-
-        daemon_mounts=$(cat <<'EOF'
-      - /var/run/docker.sock:/var/run/docker.sock
-EOF
-)
+    if [[ -z "${CLUSTER_DAEMON_PATH_INPUT}" ]]; then
+        unset VOLT_DEV_CLUSTER_DAEMON_SOURCE_DIR || true
+        return
     fi
 
-    cat > "${GENERATED_CLUSTER_COMPOSE_FILE}" <<EOF
-services:
-  storage-mongodb:
-    image: mongo:8.0.5
-    restart: unless-stopped
-    env_file:
-      - ./.generated/clusters/storage/mongodb.env
-    healthcheck:
-      test: ["CMD-SHELL", "mongosh --quiet --host localhost --username \$\$MONGO_INITDB_ROOT_USERNAME --password \$\$MONGO_INITDB_ROOT_PASSWORD --authenticationDatabase admin --eval \"db.adminCommand('ping').ok\" | grep 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 20
-    volumes:
-      - storage-mongodb-data:/data/db
-
-  storage-redis:
-    image: redis:7.4.2-alpine
-    restart: unless-stopped
-    env_file:
-      - ./.generated/clusters/storage/redis.env
-    command:
-      - redis-server
-      - --appendonly
-      - "yes"
-      - --aclfile
-      - /usr/local/etc/redis/users.acl
-    healthcheck:
-      test: ["CMD-SHELL", "redis-cli --user \$\$REDIS_USERNAME --pass \$\$REDIS_PASSWORD ping | grep PONG"]
-      interval: 10s
-      timeout: 5s
-      retries: 20
-    volumes:
-      - storage-redis-data:/data
-      - ./.generated/clusters/storage/redis.acl:/usr/local/etc/redis/users.acl:ro
-
-  storage-minio:
-    image: minio/minio:RELEASE.2025-02-28T09-55-16Z
-    restart: unless-stopped
-    env_file:
-      - ./.generated/clusters/storage/minio.env
-    command: server /data --console-address ":9001"
-    volumes:
-      - storage-minio-data:/data
-
-  storage-daemon:
-${daemon_definition}
-    restart: unless-stopped
-    env_file:
-      - ./.generated/clusters/storage/daemon.env
-    depends_on:
-      storage-mongodb:
-        condition: service_healthy
-      storage-redis:
-        condition: service_healthy
-      storage-minio:
-        condition: service_started
-      volt-server:
-        condition: service_started
-    volumes:
-${daemon_mounts}
-
-  compute-mongodb:
-    image: mongo:8.0.5
-    restart: unless-stopped
-    env_file:
-      - ./.generated/clusters/compute/mongodb.env
-    healthcheck:
-      test: ["CMD-SHELL", "mongosh --quiet --host localhost --username \$\$MONGO_INITDB_ROOT_USERNAME --password \$\$MONGO_INITDB_ROOT_PASSWORD --authenticationDatabase admin --eval \"db.adminCommand('ping').ok\" | grep 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 20
-    volumes:
-      - compute-mongodb-data:/data/db
-
-  compute-redis:
-    image: redis:7.4.2-alpine
-    restart: unless-stopped
-    env_file:
-      - ./.generated/clusters/compute/redis.env
-    command:
-      - redis-server
-      - --appendonly
-      - "yes"
-      - --aclfile
-      - /usr/local/etc/redis/users.acl
-    healthcheck:
-      test: ["CMD-SHELL", "redis-cli --user \$\$REDIS_USERNAME --pass \$\$REDIS_PASSWORD ping | grep PONG"]
-      interval: 10s
-      timeout: 5s
-      retries: 20
-    volumes:
-      - compute-redis-data:/data
-      - ./.generated/clusters/compute/redis.acl:/usr/local/etc/redis/users.acl:ro
-
-  compute-minio:
-    image: minio/minio:RELEASE.2025-02-28T09-55-16Z
-    restart: unless-stopped
-    env_file:
-      - ./.generated/clusters/compute/minio.env
-    command: server /data --console-address ":9001"
-    volumes:
-      - compute-minio-data:/data
-
-  compute-daemon:
-${daemon_definition}
-    restart: unless-stopped
-    env_file:
-      - ./.generated/clusters/compute/daemon.env
-    depends_on:
-      compute-mongodb:
-        condition: service_healthy
-      compute-redis:
-        condition: service_healthy
-      compute-minio:
-        condition: service_started
-      volt-server:
-        condition: service_started
-    volumes:
-${daemon_mounts}
-
-volumes:
-  storage-mongodb-data:
-  storage-redis-data:
-  storage-minio-data:
-  compute-mongodb-data:
-  compute-redis-data:
-  compute-minio-data:
-EOF
+    local cluster_daemon_source_path
+    cluster_daemon_source_path="$(resolve_cluster_daemon_path "${CLUSTER_DAEMON_PATH_INPUT}")"
+    assert_cluster_daemon_source_layout "${cluster_daemon_source_path}"
+    export VOLT_DEV_CLUSTER_DAEMON_SOURCE_DIR="${cluster_daemon_source_path}"
+    CLUSTER_COMPOSE_MODE_FILE="${CLUSTER_SOURCE_COMPOSE_FILE}"
 }
 
 docker_compose_base() {
@@ -388,7 +186,7 @@ docker_compose_base() {
 }
 
 docker_compose_all() {
-    docker compose --project-directory "${STACK_ROOT}" -p "${PROJECT_NAME}" -f "${BASE_COMPOSE_FILE}" -f "${GENERATED_CLUSTER_COMPOSE_FILE}" "$@"
+    docker compose --project-directory "${STACK_ROOT}" -p "${PROJECT_NAME}" -f "${BASE_COMPOSE_FILE}" -f "${CLUSTER_COMPOSE_FILE}" -f "${CLUSTER_COMPOSE_MODE_FILE}" "$@"
 }
 
 cleanup_managed_runtime_containers() {
@@ -458,8 +256,8 @@ pull_remote_cluster_daemon_images() {
 }
 
 prepare_stack_state() {
-    write_base_envs
-    write_cluster_compose
+    ensure_generated_layout
+    configure_cluster_daemon_compose
 }
 
 cmd_up() {

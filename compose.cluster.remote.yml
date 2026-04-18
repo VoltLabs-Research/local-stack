@@ -1,0 +1,6 @@
+services:
+  storage-daemon:
+    image: "${VOLT_DEV_CLUSTER_DAEMON_IMAGE}"
+
+  compute-daemon:
+    image: "${VOLT_DEV_CLUSTER_DAEMON_IMAGE}"
