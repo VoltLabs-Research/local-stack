@@ -11,7 +11,7 @@ fi
 has_local_stack_layout() {
     [[ -n "${SCRIPT_DIR}" ]] \
         && [[ -f "${SCRIPT_DIR}/stack.sh" ]] \
-        && [[ -f "${SCRIPT_DIR}/compose.base.yml" ]]
+        && [[ -f "${SCRIPT_DIR}/compose.yml" ]]
 }
 
 CALLER_ROOT="$(pwd -P)"

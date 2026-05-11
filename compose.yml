@@ -1,0 +1,270 @@
+services:
+  volt-mongodb:
+    image: mongo:8.0.5
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: volt
+      MONGO_INITDB_ROOT_PASSWORD: volt
+      MONGO_INITDB_DATABASE: volt
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --host localhost --username $$MONGO_INITDB_ROOT_USERNAME --password $$MONGO_INITDB_ROOT_PASSWORD --authenticationDatabase admin --eval \"db.adminCommand('ping').ok\" | grep 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - volt-mongodb-data:/data/db
+
+  volt-redis:
+    image: redis:7.4.2-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "voltredis"]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a voltredis ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - volt-redis-data:/data
+
+  volt-minio:
+    image: minio/minio:RELEASE.2025-02-28T09-55-16Z
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: voltminio
+      MINIO_ROOT_PASSWORD: voltminiosecret
+    command: server /data --console-address ":9001"
+    ports:
+      - "${VOLT_DEV_MINIO_PORT:-9000}:9000"
+      - "${VOLT_DEV_MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - volt-minio-data:/data
+
+  volt-server:
+    build:
+      context: "${VOLT_DEV_VOLT_SERVER_DIR}"
+      dockerfile: Dockerfile.dev
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 10s
+    command:
+      - node
+      - --max-old-space-size=8192
+      - -r
+      - ts-node/register/transpile-only
+      - -r
+      - tsconfig-paths/register
+      - src/server.ts
+    environment:
+      NODE_ENV: development
+      LOG_LEVEL: info
+      REDIS_HOST: volt-redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: voltredis
+      MINIO_ENDPOINT: volt-minio
+      MINIO_PORT: 9000
+      MINIO_USE_SSL: "false"
+      MINIO_ACCESS_KEY: voltminio
+      MINIO_SECRET_KEY: voltminiosecret
+      MINIO_PUBLIC_URL: "${VOLT_DEV_PUBLIC_MINIO_URL}"
+      SERVER_ENDPOINT: "${VOLT_DEV_PUBLIC_API_URL}"
+      SERVER_PORT: 8000
+      SERVER_HOST: 0.0.0.0
+      SERVER_HOSTNAME: "${VOLT_DEV_PUBLIC_HOST:-localhost}"
+      SERVER_SCHEMA: http
+      TEAM_CLUSTER_APP_PROXY_BIND_HOST: 0.0.0.0
+      TEAM_CLUSTER_APP_PROXY_ADVERTISED_HOST: "${VOLT_DEV_PUBLIC_HOST:-localhost}"
+      CLIENT_HOST: "${VOLT_DEV_PUBLIC_WEB_URL},${VOLT_DEV_EXTRA_WEB_ORIGINS:-}"
+      CLIENT_DEV_HOST: "${VOLT_DEV_PUBLIC_WEB_URL},${VOLT_DEV_EXTRA_WEB_ORIGINS:-}"
+      MONGO_URI: mongodb://volt:volt@volt-mongodb:27017?authSource=admin
+      MONGO_AUTH_SOURCE: admin
+      PRODUCTION_DATABASE: voltcloud@production
+      DEVELOPMENT_DATABASE: voltcloud@development
+      SSH_ENCRYPTION_KEY: volt-dev-ssh-key
+      JWT_EXPIRATION_DAYS: 7d
+      SECRET_KEY: volt-dev-secret-key
+      TEAM_CLUSTER_TCP_RELAY_BIND_HOST: 0.0.0.0
+      TEAM_CLUSTER_TCP_RELAY_ADVERTISED_HOST: volt-server
+      TEAM_CLUSTER_TCP_RELAY_PORT_START: 23000
+      TEAM_CLUSTER_TCP_RELAY_PORT_END: 23999
+      TEAM_CLUSTER_TAILSCALE_ENABLED: "false"
+      TEAM_CLUSTER_TAILSCALE_REQUIRED: "false"
+      DEMO_CLUSTER_TTL_MINUTES: "${VOLT_DEV_DEMO_CLUSTER_TTL_MINUTES:-30}"
+      DEMO_CLUSTER_DAEMON_IMAGE: "${VOLT_DEV_DEMO_CLUSTER_DAEMON_IMAGE:-volt-dev-storage-daemon}"
+      DEMO_CLUSTER_VOLT_CLOUD_URL: "${VOLT_DEV_DEMO_CLUSTER_VOLT_CLOUD_URL:-http://volt-server:8000}"
+      DEMO_CLUSTER_SERVER_NETWORK: "${VOLT_DEV_DEMO_CLUSTER_SERVER_NETWORK:-volt-dev_default}"
+      DEMO_CLUSTER_PULL_IMAGES: "${VOLT_DEV_DEMO_CLUSTER_PULL_IMAGES:-false}"
+    depends_on:
+      volt-mongodb:
+        condition: service_healthy
+      volt-redis:
+        condition: service_healthy
+      volt-minio:
+        condition: service_started
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - "${VOLT_DEV_VOLT_SERVER_MOUNT_SOURCE:-${VOLT_DEV_VOLT_SERVER_BIND_DIR:-${VOLT_DEV_VOLT_SERVER_DIR}}}:/app"
+      - volt-server-node-modules:/app/node_modules
+    ports:
+      - "${VOLT_DEV_API_PORT:-8000}:8000"
+      - "24000-24999:24000-24999"
+
+  volt-client:
+    build:
+      context: "${VOLT_DEV_VOLT_CLIENT_DIR}"
+      dockerfile: Dockerfile.dev
+    restart: unless-stopped
+    environment:
+      VITE_ENV: development
+      VITE_API_URL: "${VOLT_DEV_PUBLIC_API_URL}"
+      VITE_PROXY_API_URL: "${VOLT_DEV_INTERNAL_API_URL}"
+      VITE_DEMO_CLUSTER_ENABLED: "${VOLT_DEV_DEMO_CLUSTER_ENABLED:-true}"
+      CHOKIDAR_USEPOLLING: "true"
+      WATCHPACK_POLLING: "true"
+    depends_on:
+      - volt-server
+    volumes:
+      - "${VOLT_DEV_VOLT_CLIENT_MOUNT_SOURCE:-${VOLT_DEV_VOLT_CLIENT_BIND_DIR:-${VOLT_DEV_VOLT_CLIENT_DIR}}}:/app"
+      - volt-client-node-modules:/app/node_modules
+    ports:
+      - "${VOLT_DEV_WEB_PORT:-5173}:5173"
+
+  storage-mongodb:
+    image: mongo:8.0.5
+    restart: unless-stopped
+    env_file:
+      - ./.generated/clusters/storage/mongodb.env
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --host localhost --username $$MONGO_INITDB_ROOT_USERNAME --password $$MONGO_INITDB_ROOT_PASSWORD --authenticationDatabase admin --eval \"db.adminCommand('ping').ok\" | grep 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - storage-mongodb-data:/data/db
+
+  storage-redis:
+    image: redis:7.4.2-alpine
+    restart: unless-stopped
+    env_file:
+      - ./.generated/clusters/storage/redis.env
+    command:
+      - sh
+      - -c
+      - |
+        printf 'user default off\nuser %s on >%s ~* &* +@all\n' "$$REDIS_USERNAME" "$$REDIS_PASSWORD" > /tmp/users.acl
+        exec redis-server --appendonly yes --aclfile /tmp/users.acl
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --user $$REDIS_USERNAME --pass $$REDIS_PASSWORD ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - storage-redis-data:/data
+
+  storage-minio:
+    image: minio/minio:RELEASE.2025-02-28T09-55-16Z
+    restart: unless-stopped
+    env_file:
+      - ./.generated/clusters/storage/minio.env
+    command: server /data --console-address ":9001"
+    volumes:
+      - storage-minio-data:/data
+
+  storage-daemon:
+    image: "${VOLT_DEV_CLUSTER_DAEMON_IMAGE}"
+    restart: unless-stopped
+    env_file:
+      - ./.generated/clusters/storage/daemon.env
+    depends_on:
+      storage-mongodb:
+        condition: service_healthy
+      storage-redis:
+        condition: service_healthy
+      storage-minio:
+        condition: service_started
+      volt-server:
+        condition: service_started
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - "${VOLT_DEV_CLUSTER_DAEMON_MOUNT_SOURCE:-cluster-daemon-app-src}:/app"
+      - storage-daemon-node-modules:/app/node_modules
+
+  compute-mongodb:
+    image: mongo:8.0.5
+    restart: unless-stopped
+    env_file:
+      - ./.generated/clusters/compute/mongodb.env
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --host localhost --username $$MONGO_INITDB_ROOT_USERNAME --password $$MONGO_INITDB_ROOT_PASSWORD --authenticationDatabase admin --eval \"db.adminCommand('ping').ok\" | grep 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - compute-mongodb-data:/data/db
+
+  compute-redis:
+    image: redis:7.4.2-alpine
+    restart: unless-stopped
+    env_file:
+      - ./.generated/clusters/compute/redis.env
+    command:
+      - sh
+      - -c
+      - |
+        printf 'user default off\nuser %s on >%s ~* &* +@all\n' "$$REDIS_USERNAME" "$$REDIS_PASSWORD" > /tmp/users.acl
+        exec redis-server --appendonly yes --aclfile /tmp/users.acl
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --user $$REDIS_USERNAME --pass $$REDIS_PASSWORD ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - compute-redis-data:/data
+
+  compute-minio:
+    image: minio/minio:RELEASE.2025-02-28T09-55-16Z
+    restart: unless-stopped
+    env_file:
+      - ./.generated/clusters/compute/minio.env
+    command: server /data --console-address ":9001"
+    volumes:
+      - compute-minio-data:/data
+
+  compute-daemon:
+    image: "${VOLT_DEV_CLUSTER_DAEMON_IMAGE}"
+    restart: unless-stopped
+    env_file:
+      - ./.generated/clusters/compute/daemon.env
+    environment:
+      PLUGIN_PROCESS_POOL_MIN_IDLE: "8"
+      RESULT_CACHE_DISABLED: "1"
+    depends_on:
+      compute-mongodb:
+        condition: service_healthy
+      compute-redis:
+        condition: service_healthy
+      compute-minio:
+        condition: service_started
+      volt-server:
+        condition: service_started
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - "${VOLT_DEV_CLUSTER_DAEMON_MOUNT_SOURCE:-cluster-daemon-app-src}:/app"
+      - compute-daemon-node-modules:/app/node_modules
+
+volumes:
+  volt-mongodb-data:
+  volt-redis-data:
+  volt-minio-data:
+  volt-server-app-src:
+  volt-server-node-modules:
+  volt-client-app-src:
+  volt-client-node-modules:
+  storage-mongodb-data:
+  storage-redis-data:
+  storage-minio-data:
+  cluster-daemon-app-src:
+  storage-daemon-node-modules:
+  compute-mongodb-data:
+  compute-redis-data:
+  compute-minio-data:
+  compute-daemon-node-modules:

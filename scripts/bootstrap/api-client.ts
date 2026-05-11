@@ -163,7 +163,7 @@ export class VoltLocalStackApiClient {
     }
 
     async request(pathname: string, options: RequestOptions = {}): Promise<RequestResult> {
-        const response = await fetch(`${trimTrailingSlash(this.#config.apiUrl)}${pathname}`, {
+        const response = await fetch(`${trimTrailingSlash(this.#config.bootstrapApiUrl)}${pathname}`, {
             method: options.method || 'GET',
             headers: {
                 ...(options.body ? { 'Content-Type': 'application/json' } : {}),

@@ -62,6 +62,7 @@ export interface ClusterConfig {
 
 export interface BootstrapConfig {
     apiUrl: string;
+    bootstrapApiUrl: string;
     internalApiUrl: string;
     webUrl: string;
     composeProjectName: string;

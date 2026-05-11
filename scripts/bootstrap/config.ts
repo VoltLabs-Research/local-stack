@@ -89,8 +89,11 @@ export const createBootstrapConfig = (input: {
         env.VOLT_DEV_CLUSTER_INSTALL_ROOT
     ) || '/opt/volt-dev/clusters';
 
+    const apiUrl = readFirstText(options.apiUrl, env.VOLT_DEV_PUBLIC_API_URL) || 'http://localhost:8000';
+
     return {
-        apiUrl: readFirstText(options.apiUrl, env.VOLT_DEV_PUBLIC_API_URL) || 'http://localhost:8000',
+        apiUrl,
+        bootstrapApiUrl: readFirstText(options.bootstrapApiUrl, env.VOLT_DEV_BOOTSTRAP_API_URL) || apiUrl,
         internalApiUrl: readFirstText(options.internalApiUrl, env.VOLT_DEV_INTERNAL_API_URL) || 'http://volt-server:8000',
         webUrl: readFirstText(options.webUrl, env.VOLT_DEV_PUBLIC_WEB_URL) || 'http://localhost:5173',
         composeProjectName: readFirstText(options.stackProjectName, env.VOLT_DEV_STACK_PROJECT_NAME) || 'volt-dev',
