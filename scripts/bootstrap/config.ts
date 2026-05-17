@@ -39,23 +39,6 @@ const readFirstNumber = (context: string, ...values: Array<string | number | und
     throw new Error(`${context} is required`);
 };
 
-const resolveClusterName = (
-    explicitName: string | undefined,
-    fallbackName: string,
-    suffix: string,
-    legacyClusterName: string | undefined
-): string => {
-    if (explicitName) {
-        return explicitName;
-    }
-
-    if (legacyClusterName) {
-        return `${legacyClusterName} ${suffix}`;
-    }
-
-    return fallbackName;
-};
-
 const createClusterConfig = (input: {
     key: ClusterConfig['key'];
     servicePrefix: string;
@@ -63,6 +46,8 @@ const createClusterConfig = (input: {
     name: string;
     installRoot: string;
     ports: ClusterConfig['ports'];
+    publicMinioEndpoint: string;
+    publicObjectRelayBaseUrl: string;
 }): ClusterConfig => {
     return {
         key: input.key,
@@ -70,8 +55,23 @@ const createClusterConfig = (input: {
         role: input.role,
         name: input.name,
         installRoot: input.installRoot,
-        ports: input.ports
+        ports: input.ports,
+        publicMinioEndpoint: input.publicMinioEndpoint,
+        publicObjectRelayBaseUrl: input.publicObjectRelayBaseUrl
     };
+};
+
+const trimTrailingSlash = (value: string): string => {
+    return value.replace(/\/+$/g, '');
+};
+
+const resolvePublicEndpointFromApiUrl = (apiUrl: string, port: number): string => {
+    const url = new URL(apiUrl);
+    url.port = String(port);
+    url.pathname = '';
+    url.search = '';
+    url.hash = '';
+    return trimTrailingSlash(url.toString());
 };
 
 export const createBootstrapConfig = (input: {
@@ -80,7 +80,7 @@ export const createBootstrapConfig = (input: {
     defaultOutputDirectory: string;
 }): BootstrapConfig => {
     const { options, env, defaultOutputDirectory } = input;
-    const legacyClusterName = readFirstText(options.clusterName, env.VOLT_DEV_CLUSTER_NAME);
+    const clusterName = readFirstText(options.clusterName, env.VOLT_DEV_CLUSTER_NAME);
     const daemonNodeEnv =
         readFirstText(options.daemonNodeEnv, env.VOLT_DEV_CLUSTER_DAEMON_NODE_ENV)
         || (env.VOLT_DEV_CLUSTER_DAEMON_PATH ? 'development' : 'production');
@@ -90,6 +90,18 @@ export const createBootstrapConfig = (input: {
     ) || '/opt/volt-dev/clusters';
 
     const apiUrl = readFirstText(options.apiUrl, env.VOLT_DEV_PUBLIC_API_URL) || 'http://localhost:8000';
+    const clusterMinioPort = readFirstNumber(
+        'cluster MinIO port',
+        options.clusterMinioPort,
+        env.VOLT_DEV_CLUSTER_MINIO_PORT,
+        9200
+    );
+    const clusterDaemonPort = readFirstNumber(
+        'cluster daemon port',
+        options.clusterDaemonPort,
+        env.VOLT_DEV_CLUSTER_DAEMON_PORT,
+        18080
+    );
 
     return {
         apiUrl,
@@ -126,90 +138,40 @@ export const createBootstrapConfig = (input: {
         },
         clusters: [
             createClusterConfig({
-                key: 'storage',
-                servicePrefix: 'storage',
-                role: TEAM_CLUSTER_ROLE.StorageServer,
-                name: resolveClusterName(
-                    readFirstText(options.storageClusterName, env.VOLT_DEV_STORAGE_CLUSTER_NAME),
-                    'Local Dev Storage Server',
-                    'Storage Server',
-                    legacyClusterName
-                ),
-                installRoot: readFirstText(options.storageInstallRoot, env.VOLT_DEV_STORAGE_CLUSTER_INSTALL_ROOT)
-                    || path.posix.join(defaultInstallRoot, 'storage'),
+                key: 'cluster',
+                servicePrefix: 'cluster',
+                role: TEAM_CLUSTER_ROLE.Cluster,
+                name: clusterName || 'Local Dev Cluster',
+                installRoot: readFirstText(options.clusterInstallRoot)
+                    || path.posix.join(defaultInstallRoot, 'cluster'),
                 ports: {
-                    minio: readFirstNumber(
-                        'storage cluster MinIO port',
-                        options.storageClusterMinioPort,
-                        env.VOLT_DEV_STORAGE_CLUSTER_MINIO_PORT,
-                        options.clusterMinioPort,
-                        env.VOLT_DEV_CLUSTER_MINIO_PORT,
-                        9000
-                    ),
+                    minio: clusterMinioPort,
                     redis: readFirstNumber(
-                        'storage cluster Redis port',
-                        options.storageClusterRedisPort,
-                        env.VOLT_DEV_STORAGE_CLUSTER_REDIS_PORT,
+                        'cluster Redis port',
                         options.clusterRedisPort,
                         env.VOLT_DEV_CLUSTER_REDIS_PORT,
                         6379
                     ),
                     mongodb: readFirstNumber(
-                        'storage cluster MongoDB port',
-                        options.storageClusterMongoPort,
-                        env.VOLT_DEV_STORAGE_CLUSTER_MONGO_PORT,
+                        'cluster MongoDB port',
                         options.clusterMongoPort,
                         env.VOLT_DEV_CLUSTER_MONGO_PORT,
                         27017
                     ),
-                    daemon: readFirstNumber(
-                        'storage cluster daemon port',
-                        options.storageClusterDaemonPort,
-                        env.VOLT_DEV_STORAGE_CLUSTER_DAEMON_PORT,
-                        options.clusterDaemonPort,
-                        env.VOLT_DEV_CLUSTER_DAEMON_PORT,
-                        8080
-                    )
-                }
-            }),
-            createClusterConfig({
-                key: 'compute',
-                servicePrefix: 'compute',
-                role: TEAM_CLUSTER_ROLE.ComputeNode,
-                name: resolveClusterName(
-                    readFirstText(options.computeClusterName, env.VOLT_DEV_COMPUTE_CLUSTER_NAME),
-                    'Local Dev Compute Node',
-                    'Compute Node',
-                    legacyClusterName
+                    daemon: clusterDaemonPort
+                },
+                publicMinioEndpoint: trimTrailingSlash(
+                    readFirstText(
+                        options.clusterMinioPublicEndpoint,
+                        env.VOLT_DEV_CLUSTER_MINIO_PUBLIC_ENDPOINT
+                    ) || resolvePublicEndpointFromApiUrl(apiUrl, clusterMinioPort)
                 ),
-                installRoot: readFirstText(options.computeInstallRoot, env.VOLT_DEV_COMPUTE_CLUSTER_INSTALL_ROOT)
-                    || path.posix.join(defaultInstallRoot, 'compute'),
-                ports: {
-                    minio: readFirstNumber(
-                        'compute cluster MinIO port',
-                        options.computeClusterMinioPort,
-                        env.VOLT_DEV_COMPUTE_CLUSTER_MINIO_PORT,
-                        9001
-                    ),
-                    redis: readFirstNumber(
-                        'compute cluster Redis port',
-                        options.computeClusterRedisPort,
-                        env.VOLT_DEV_COMPUTE_CLUSTER_REDIS_PORT,
-                        6380
-                    ),
-                    mongodb: readFirstNumber(
-                        'compute cluster MongoDB port',
-                        options.computeClusterMongoPort,
-                        env.VOLT_DEV_COMPUTE_CLUSTER_MONGO_PORT,
-                        27018
-                    ),
-                    daemon: readFirstNumber(
-                        'compute cluster daemon port',
-                        options.computeClusterDaemonPort,
-                        env.VOLT_DEV_COMPUTE_CLUSTER_DAEMON_PORT,
-                        8081
-                    )
-                }
+                publicObjectRelayBaseUrl: trimTrailingSlash(
+                    readFirstText(
+                        options.clusterObjectRelayPublicBaseUrl,
+                        env.VOLT_DEV_CLUSTER_OBJECT_RELAY_PUBLIC_BASE_URL
+                    ) || resolvePublicEndpointFromApiUrl(apiUrl, clusterDaemonPort)
+                )
             })
         ]
     };

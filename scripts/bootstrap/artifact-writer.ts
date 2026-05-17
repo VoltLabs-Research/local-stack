@@ -24,12 +24,14 @@ const buildDaemonEnvLines = (input: {
         `COMPOSE_PROJECT_NAME=${config.composeProjectName}`,
         `TEAM_CLUSTER_DAEMON_PASSWORD=${services.daemon.password}`,
         `TEAM_CLUSTER_HEALTHCHECK_PATH=/api/team-clusters/${cluster._id}/healthcheck`,
+        `SSH_ENCRYPTION_KEY=${process.env.SSH_ENCRYPTION_KEY?.trim() || 'volt-dev-ssh-key'}`,
         `TEAM_CLUSTER_INSTALL_ROOT=${clusterConfig.installRoot}`,
         'TEAM_CLUSTER_DAEMON_DISTRIBUTION_MODE=build',
         'TEAM_CLUSTER_HEARTBEAT_INTERVAL_MS=10000',
         'TEAM_CLUSTER_METRICS_INTERVAL_MS=3000',
         'MINIO_USE_SSL=false',
         `MINIO_ENDPOINT=http://${clusterConfig.servicePrefix}-minio:9000`,
+        `MINIO_PUBLIC_ENDPOINT=${clusterConfig.publicMinioEndpoint}`,
         `MINIO_ACCESS_KEY=${services.minio.username}`,
         `MINIO_SECRET_KEY=${services.minio.password}`,
         `MONGODB_URI=mongodb://${services.mongodb.username}:${services.mongodb.password}@${clusterConfig.servicePrefix}-mongodb:27017/volt?authSource=admin`,
@@ -45,7 +47,8 @@ const buildDaemonEnvLines = (input: {
         'TEAM_CLUSTER_TAILSCALE_REQUIRED=false',
         'TEAM_CLUSTER_OBJECT_GATEWAY_BIND_HOST=0.0.0.0',
         'TEAM_CLUSTER_OBJECT_GATEWAY_PORT=9080',
-        'TEAM_CLUSTER_OBJECT_GATEWAY_DIRECT_ONLY=false'
+        'TEAM_CLUSTER_OBJECT_GATEWAY_DIRECT_ONLY=false',
+        `TEAM_CLUSTER_OBJECT_RELAY_PUBLIC_BASE_URL=${clusterConfig.publicObjectRelayBaseUrl}`
     ];
 
     if (enrollmentToken) {

@@ -31,11 +31,11 @@ VOLT_SERVER_ROOT="${VOLT_ROOT}/server"
 VOLT_CLIENT_ROOT="${VOLT_ROOT}/client"
 GENERATED_DIR="${STACK_ROOT}/.generated"
 CLUSTERS_GENERATED_DIR="${GENERATED_DIR}/clusters"
-STORAGE_CLUSTER_GENERATED_DIR="${CLUSTERS_GENERATED_DIR}/storage"
-COMPUTE_CLUSTER_GENERATED_DIR="${CLUSTERS_GENERATED_DIR}/compute"
+CLUSTER_GENERATED_DIR="${CLUSTERS_GENERATED_DIR}/cluster"
 COMPOSE_FILE="${STACK_ROOT}/compose.yml"
 BOOTSTRAP_CONTAINER_ROOT="/tmp/volt-local-stack"
 BOOTSTRAP_CONTAINER_OUTPUT_DIR="${BOOTSTRAP_CONTAINER_ROOT}/.generated/clusters"
+BIND_PROBE_IMAGE="${VOLT_DEV_BIND_PROBE_IMAGE:-node:22-bookworm-slim}"
 
 export VOLT_DEV_VOLT_SERVER_DIR="${VOLT_SERVER_ROOT}"
 export VOLT_DEV_VOLT_CLIENT_DIR="${VOLT_CLIENT_ROOT}"
@@ -45,7 +45,9 @@ export VOLT_DEV_VOLT_SERVER_MOUNT_SOURCE="${VOLT_DEV_VOLT_SERVER_BIND_DIR}"
 export VOLT_DEV_VOLT_CLIENT_MOUNT_SOURCE="${VOLT_DEV_VOLT_CLIENT_BIND_DIR}"
 
 PROJECT_NAME="${VOLT_DEV_STACK_PROJECT_NAME:-volt-dev}"
-PUBLIC_HOST_DEFAULT="${VOLT_DEV_PUBLIC_HOST:-localhost}"
+DEFAULT_LAN_HOST="$(ip -o -4 addr show scope global 2>/dev/null \
+    | awk '$2 !~ /^(docker|br-|veth)/ { split($4, address, "/"); if (address[1] != "" && address[1] !~ /^169[.]254[.]/) { print address[1]; exit } }')"
+PUBLIC_HOST_DEFAULT="${VOLT_DEV_PUBLIC_HOST:-${DEFAULT_LAN_HOST:-localhost}}"
 API_HOST_PORT="${VOLT_DEV_API_PORT:-8100}"
 WEB_HOST_PORT="${VOLT_DEV_WEB_PORT:-5273}"
 PUBLIC_API_URL="${VOLT_DEV_PUBLIC_API_URL:-http://${PUBLIC_HOST_DEFAULT}:${API_HOST_PORT}}"
@@ -54,7 +56,17 @@ INTERNAL_API_URL="${VOLT_DEV_INTERNAL_API_URL:-http://volt-server:8000}"
 BOOTSTRAP_API_URL="${VOLT_DEV_BOOTSTRAP_API_URL:-${PUBLIC_API_URL}}"
 MINIO_HOST_PORT="${VOLT_DEV_MINIO_PORT:-9100}"
 MINIO_CONSOLE_HOST_PORT="${VOLT_DEV_MINIO_CONSOLE_PORT:-9101}"
-PUBLIC_MINIO_URL="${VOLT_DEV_PUBLIC_MINIO_URL:-http://${PUBLIC_HOST_DEFAULT}:${MINIO_HOST_PORT}}"
+PUBLIC_MINIO_HOST_DEFAULT="${VOLT_DEV_PUBLIC_MINIO_HOST:-${DEFAULT_LAN_HOST:-${PUBLIC_HOST_DEFAULT}}}"
+PUBLIC_MINIO_URL="${VOLT_DEV_PUBLIC_MINIO_URL:-http://${PUBLIC_MINIO_HOST_DEFAULT}:${MINIO_HOST_PORT}}"
+CLUSTER_MINIO_HOST_PORT="${VOLT_DEV_CLUSTER_MINIO_PORT:-9200}"
+CLUSTER_MINIO_PUBLIC_HOST_DEFAULT="${VOLT_DEV_CLUSTER_MINIO_PUBLIC_HOST:-${PUBLIC_MINIO_HOST_DEFAULT}}"
+CLUSTER_MINIO_PUBLIC_ENDPOINT="${VOLT_DEV_CLUSTER_MINIO_PUBLIC_ENDPOINT:-http://${CLUSTER_MINIO_PUBLIC_HOST_DEFAULT}:${CLUSTER_MINIO_HOST_PORT}}"
+CLUSTER_DAEMON_HOST_PORT="${VOLT_DEV_CLUSTER_DAEMON_PORT:-18080}"
+CLUSTER_OBJECT_RELAY_PUBLIC_HOST_DEFAULT="${VOLT_DEV_CLUSTER_OBJECT_RELAY_PUBLIC_HOST:-${PUBLIC_MINIO_HOST_DEFAULT}}"
+CLUSTER_OBJECT_RELAY_PUBLIC_BASE_URL="${VOLT_DEV_CLUSTER_OBJECT_RELAY_PUBLIC_BASE_URL:-http://${CLUSTER_OBJECT_RELAY_PUBLIC_HOST_DEFAULT}:${CLUSTER_DAEMON_HOST_PORT}}"
+DEFAULT_EXTRA_WEB_ORIGINS="$(ip -o -4 addr show scope global 2>/dev/null \
+    | awk -v port="${WEB_HOST_PORT}" '$2 !~ /^(docker|br-|veth)/ { split($4, address, "/"); if (address[1] != "") { printf "%shttp://%s:%s", separator, address[1], port; separator="," } }')"
+EXTRA_WEB_ORIGINS="${VOLT_DEV_EXTRA_WEB_ORIGINS:-${DEFAULT_EXTRA_WEB_ORIGINS}}"
 DEFAULT_CLUSTER_DAEMON_IMAGE="ghcr.io/voltlabs-research/volt-cluster-daemon:main"
 CLUSTER_DAEMON_IMAGE="${VOLT_DEV_CLUSTER_DAEMON_IMAGE:-${DEFAULT_CLUSTER_DAEMON_IMAGE}}"
 DOWN_TIMEOUT_SECONDS="${VOLT_DEV_DOWN_TIMEOUT_SECONDS:-15}"
@@ -80,12 +92,17 @@ export VOLT_DEV_PUBLIC_WEB_URL="${PUBLIC_WEB_URL}"
 export VOLT_DEV_INTERNAL_API_URL="${INTERNAL_API_URL}"
 export VOLT_DEV_BOOTSTRAP_API_URL="${BOOTSTRAP_API_URL}"
 export VOLT_DEV_PUBLIC_MINIO_URL="${PUBLIC_MINIO_URL}"
+export VOLT_DEV_EXTRA_WEB_ORIGINS="${EXTRA_WEB_ORIGINS}"
 export VOLT_DEV_PUBLIC_HOST="${PUBLIC_API_HOST}"
 export VOLT_DEV_CLUSTER_DAEMON_IMAGE="${CLUSTER_DAEMON_IMAGE}"
 export VOLT_DEV_API_PORT="${API_HOST_PORT}"
 export VOLT_DEV_WEB_PORT="${WEB_HOST_PORT}"
 export VOLT_DEV_MINIO_PORT="${MINIO_HOST_PORT}"
 export VOLT_DEV_MINIO_CONSOLE_PORT="${MINIO_CONSOLE_HOST_PORT}"
+export VOLT_DEV_CLUSTER_MINIO_PORT="${CLUSTER_MINIO_HOST_PORT}"
+export VOLT_DEV_CLUSTER_MINIO_PUBLIC_ENDPOINT="${CLUSTER_MINIO_PUBLIC_ENDPOINT}"
+export VOLT_DEV_CLUSTER_DAEMON_PORT="${CLUSTER_DAEMON_HOST_PORT}"
+export VOLT_DEV_CLUSTER_OBJECT_RELAY_PUBLIC_BASE_URL="${CLUSTER_OBJECT_RELAY_PUBLIC_BASE_URL}"
 
 if [[ -n "${VOLT_DEV_CLUSTER_DAEMON_PATH:-}" ]]; then
     CLUSTER_DAEMON_PATH_INPUT="${VOLT_DEV_CLUSTER_DAEMON_PATH}"
@@ -186,8 +203,7 @@ assert_cluster_daemon_source_layout() {
 
 ensure_generated_layout() {
     mkdir -p "${GENERATED_DIR}"
-    ensure_cluster_generated_layout "${STORAGE_CLUSTER_GENERATED_DIR}"
-    ensure_cluster_generated_layout "${COMPUTE_CLUSTER_GENERATED_DIR}"
+    ensure_cluster_generated_layout "${CLUSTER_GENERATED_DIR}"
 }
 
 ensure_cluster_generated_layout() {
@@ -224,18 +240,104 @@ configure_cluster_daemon_compose() {
 
 configure_mount_sources() {
     if source_mounts_enabled; then
-        export VOLT_DEV_VOLT_SERVER_MOUNT_SOURCE="${VOLT_DEV_VOLT_SERVER_BIND_DIR}"
-        export VOLT_DEV_VOLT_CLIENT_MOUNT_SOURCE="${VOLT_DEV_VOLT_CLIENT_BIND_DIR}"
+        export VOLT_DEV_VOLT_SERVER_MOUNT_SOURCE="$(resolve_docker_bind_source "${VOLT_DEV_VOLT_SERVER_BIND_DIR}" "package.json" "Volt server")"
+        export VOLT_DEV_VOLT_CLIENT_MOUNT_SOURCE="$(resolve_docker_bind_source "${VOLT_DEV_VOLT_CLIENT_BIND_DIR}" "package.json" "Volt client")"
+        export VOLT_DEV_SOURCE_MOUNT_MODE="bind"
     else
         export VOLT_DEV_VOLT_SERVER_MOUNT_SOURCE="volt-server-app-src"
         export VOLT_DEV_VOLT_CLIENT_MOUNT_SOURCE="volt-client-app-src"
+        export VOLT_DEV_SOURCE_MOUNT_MODE="volume"
     fi
 
-    if source_mounts_enabled && [[ -n "${VOLT_DEV_CLUSTER_DAEMON_BIND_DIR:-}" ]]; then
-        export VOLT_DEV_CLUSTER_DAEMON_MOUNT_SOURCE="${VOLT_DEV_CLUSTER_DAEMON_BIND_DIR}"
+    if [[ "${VOLT_DEV_SOURCE_MOUNT_MODE}" == "bind" && -n "${VOLT_DEV_CLUSTER_DAEMON_BIND_DIR:-}" ]]; then
+        export VOLT_DEV_CLUSTER_DAEMON_MOUNT_SOURCE="$(resolve_docker_bind_source "${VOLT_DEV_CLUSTER_DAEMON_BIND_DIR}" "package.json" "ClusterDaemon")"
     else
         export VOLT_DEV_CLUSTER_DAEMON_MOUNT_SOURCE="cluster-daemon-app-src"
     fi
+}
+
+docker_bind_mount_has_file() {
+    local host_dir="$1"
+    local relative_file="$2"
+
+    ensure_bind_probe_image
+
+    docker run \
+        --rm \
+        --entrypoint sh \
+        -v "${host_dir}:/mnt/source:ro" \
+        "${BIND_PROBE_IMAGE}" \
+        -c "test -f \"/mnt/source/${relative_file}\"" \
+        >/dev/null 2>&1
+}
+
+ensure_bind_probe_image() {
+    if docker image inspect "${BIND_PROBE_IMAGE}" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    docker pull "${BIND_PROBE_IMAGE}" >/dev/null
+}
+
+translate_path_for_docker_daemon() {
+    local path="$1"
+    local best_mount=""
+    local best_root=""
+    local line
+    local before_separator
+    local mount_id
+    local parent_id
+    local major_minor
+    local root
+    local mount_point
+    local rest
+    local relative_path
+
+    while IFS= read -r line; do
+        before_separator="${line%% - *}"
+        read -r mount_id parent_id major_minor root mount_point rest <<< "${before_separator}"
+
+        if [[ "${path}" == "${mount_point}" || "${path}" == "${mount_point}/"* ]]; then
+            if [[ "${#mount_point}" -gt "${#best_mount}" ]]; then
+                best_mount="${mount_point}"
+                best_root="${root}"
+            fi
+        fi
+    done < /proc/self/mountinfo
+
+    if [[ -z "${best_mount}" || "${best_root}" == "/" ]]; then
+        printf '%s\n' "${path}"
+        return
+    fi
+
+    relative_path="${path#"${best_mount}"}"
+    printf '%s%s\n' "${best_root}" "${relative_path}"
+}
+
+resolve_docker_bind_source() {
+    local requested_path="$1"
+    local required_file="$2"
+    local label="$3"
+    local translated_path
+
+    if docker_bind_mount_has_file "${requested_path}" "${required_file}"; then
+        printf '%s\n' "${requested_path}"
+        return
+    fi
+
+    translated_path="$(translate_path_for_docker_daemon "${requested_path}")"
+    if [[ "${translated_path}" != "${requested_path}" ]] && docker_bind_mount_has_file "${translated_path}" "${required_file}"; then
+        echo "Using Docker-visible ${label} source: ${translated_path}" >&2
+        printf '%s\n' "${translated_path}"
+        return
+    fi
+
+    cat >&2 <<EOF
+Docker cannot bind-mount ${label} source from ${requested_path}.
+Tried translated daemon path: ${translated_path}
+Set the matching *_HOST_DIR environment variable to a path visible to the Docker daemon.
+EOF
+    exit 1
 }
 
 build_local_cluster_daemon_image() {
@@ -247,6 +349,57 @@ build_local_cluster_daemon_image() {
         -f "${VOLT_DEV_CLUSTER_DAEMON_SOURCE_DIR}/Dockerfile.dev" \
         -t "${CLUSTER_DAEMON_IMAGE}" \
         "${VOLT_DEV_CLUSTER_DAEMON_SOURCE_DIR}"
+}
+
+sync_node_modules_volume_from_lock() {
+    local service_name="$1"
+    local volume_name="$2"
+    local lock_file="$3"
+    local hash_file="$4"
+
+    if [[ ! -f "${lock_file}" ]]; then
+        return 0
+    fi
+
+    local current_hash
+    local previous_hash=""
+
+    current_hash="$(sha256sum "${lock_file}" | awk '{print $1}')"
+    if [[ -f "${hash_file}" ]]; then
+        previous_hash="$(<"${hash_file}")"
+    fi
+
+    if [[ "${current_hash}" == "${previous_hash}" ]]; then
+        return 0
+    fi
+
+    docker_compose_all rm -sf "${service_name}" >/dev/null 2>&1 || true
+    docker volume rm "${PROJECT_NAME}_${volume_name}" >/dev/null 2>&1 || true
+
+    mkdir -p "${GENERATED_DIR}"
+    printf '%s\n' "${current_hash}" > "${hash_file}"
+}
+
+sync_dev_node_modules_volumes() {
+    sync_node_modules_volume_from_lock \
+        volt-server \
+        volt-server-node-modules \
+        "${VOLT_SERVER_ROOT}/package-lock.json" \
+        "${GENERATED_DIR}/volt-server-package-lock.sha256"
+
+    sync_node_modules_volume_from_lock \
+        volt-client \
+        volt-client-node-modules \
+        "${VOLT_CLIENT_ROOT}/package-lock.json" \
+        "${GENERATED_DIR}/volt-client-package-lock.sha256"
+
+    if [[ -n "${VOLT_DEV_CLUSTER_DAEMON_SOURCE_DIR:-}" ]]; then
+        sync_node_modules_volume_from_lock \
+            cluster-daemon \
+            cluster-daemon-node-modules \
+            "${VOLT_DEV_CLUSTER_DAEMON_SOURCE_DIR}/package-lock.json" \
+            "${GENERATED_DIR}/cluster-daemon-package-lock.sha256"
+    fi
 }
 
 docker_compose_base() {
@@ -333,6 +486,10 @@ run_bootstrap_in_server_container() {
         -e VOLT_DEV_BOOTSTRAP_API_URL="http://127.0.0.1:8000" \
         -e VOLT_DEV_PUBLIC_WEB_URL="${PUBLIC_WEB_URL}" \
         -e VOLT_DEV_INTERNAL_API_URL="${INTERNAL_API_URL}" \
+        -e VOLT_DEV_CLUSTER_MINIO_PORT="${CLUSTER_MINIO_HOST_PORT}" \
+        -e VOLT_DEV_CLUSTER_MINIO_PUBLIC_ENDPOINT="${CLUSTER_MINIO_PUBLIC_ENDPOINT}" \
+        -e VOLT_DEV_CLUSTER_DAEMON_PORT="${CLUSTER_DAEMON_HOST_PORT}" \
+        -e VOLT_DEV_CLUSTER_OBJECT_RELAY_PUBLIC_BASE_URL="${CLUSTER_OBJECT_RELAY_PUBLIC_BASE_URL}" \
         "${container_id}" \
         node "${BOOTSTRAP_CONTAINER_ROOT}/scripts/bootstrap-dev-stack.ts" \
         "${command}" \
@@ -414,14 +571,10 @@ base_up_services() {
 
 cluster_up_services() {
     local services=(
-        storage-mongodb
-        storage-redis
-        storage-minio
-        storage-daemon
-        compute-mongodb
-        compute-redis
-        compute-minio
-        compute-daemon
+        cluster-mongodb
+        cluster-redis
+        cluster-minio
+        cluster-daemon
     )
 
     printf '%s\n' "${services[@]}"
@@ -439,6 +592,10 @@ run_bootstrap_provision() {
     VOLT_DEV_BOOTSTRAP_API_URL="${BOOTSTRAP_API_URL}" \
     VOLT_DEV_PUBLIC_WEB_URL="${PUBLIC_WEB_URL}" \
     VOLT_DEV_INTERNAL_API_URL="${INTERNAL_API_URL}" \
+    VOLT_DEV_CLUSTER_MINIO_PORT="${CLUSTER_MINIO_HOST_PORT}" \
+    VOLT_DEV_CLUSTER_MINIO_PUBLIC_ENDPOINT="${CLUSTER_MINIO_PUBLIC_ENDPOINT}" \
+    VOLT_DEV_CLUSTER_DAEMON_PORT="${CLUSTER_DAEMON_HOST_PORT}" \
+    VOLT_DEV_CLUSTER_OBJECT_RELAY_PUBLIC_BASE_URL="${CLUSTER_OBJECT_RELAY_PUBLIC_BASE_URL}" \
     node "${BOOTSTRAP_SCRIPT}" \
         provision \
         --output-dir "${CLUSTERS_GENERATED_DIR}"
@@ -455,6 +612,10 @@ run_bootstrap_wait_cluster() {
     VOLT_DEV_BOOTSTRAP_API_URL="${BOOTSTRAP_API_URL}" \
     VOLT_DEV_PUBLIC_WEB_URL="${PUBLIC_WEB_URL}" \
     VOLT_DEV_INTERNAL_API_URL="${INTERNAL_API_URL}" \
+    VOLT_DEV_CLUSTER_MINIO_PORT="${CLUSTER_MINIO_HOST_PORT}" \
+    VOLT_DEV_CLUSTER_MINIO_PUBLIC_ENDPOINT="${CLUSTER_MINIO_PUBLIC_ENDPOINT}" \
+    VOLT_DEV_CLUSTER_DAEMON_PORT="${CLUSTER_DAEMON_HOST_PORT}" \
+    VOLT_DEV_CLUSTER_OBJECT_RELAY_PUBLIC_BASE_URL="${CLUSTER_OBJECT_RELAY_PUBLIC_BASE_URL}" \
     node "${BOOTSTRAP_SCRIPT}" \
         wait-cluster \
         --output-dir "${CLUSTERS_GENERATED_DIR}"
@@ -469,7 +630,7 @@ pull_remote_cluster_daemon_images() {
         return 0
     fi
 
-    docker_compose_all pull storage-daemon compute-daemon
+    docker_compose_all pull cluster-daemon
 }
 
 prepare_stack_state() {
@@ -481,6 +642,7 @@ prepare_stack_state() {
 cmd_up() {
     prepare_stack_state
     cleanup_managed_runtime_containers
+    sync_dev_node_modules_volumes
 
     mapfile -t base_services < <(base_up_services)
     docker_compose_base up -d --build "${base_services[@]}"
@@ -549,6 +711,10 @@ Environment overrides:
   VOLT_DEV_WEB_PORT           Default: ${WEB_HOST_PORT}
   VOLT_DEV_MINIO_PORT          Default: ${MINIO_HOST_PORT}
   VOLT_DEV_MINIO_CONSOLE_PORT  Default: ${MINIO_CONSOLE_HOST_PORT}
+  VOLT_DEV_CLUSTER_MINIO_PORT  Default: ${CLUSTER_MINIO_HOST_PORT}
+  VOLT_DEV_CLUSTER_MINIO_PUBLIC_ENDPOINT Default: ${CLUSTER_MINIO_PUBLIC_ENDPOINT}
+  VOLT_DEV_CLUSTER_DAEMON_PORT Default: ${CLUSTER_DAEMON_HOST_PORT}
+  VOLT_DEV_CLUSTER_OBJECT_RELAY_PUBLIC_BASE_URL Default: ${CLUSTER_OBJECT_RELAY_PUBLIC_BASE_URL}
   VOLT_DEV_WORKSPACE_DIR       Optional directory containing Volt/ and ClusterDaemon/. Default: <current-dir>
   VOLT_DEV_CLUSTER_DAEMON_PATH Optional path to a local ClusterDaemon checkout
   VOLT_DEV_CLUSTER_DAEMON_IMAGE Default: ${CLUSTER_DAEMON_IMAGE}
@@ -559,8 +725,6 @@ Environment overrides:
   VOLT_DEV_USER_PASSWORD
   VOLT_DEV_TEAM_NAME
   VOLT_DEV_CLUSTER_NAME
-  VOLT_DEV_STORAGE_CLUSTER_NAME
-  VOLT_DEV_COMPUTE_CLUSTER_NAME
 EOF
 }
 

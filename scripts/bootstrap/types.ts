@@ -52,12 +52,14 @@ export interface ClusterPorts {
 }
 
 export interface ClusterConfig {
-    key: 'storage' | 'compute';
+    key: 'cluster';
     servicePrefix: string;
     role: TeamClusterRole;
     name: string;
     installRoot: string;
     ports: ClusterPorts;
+    publicMinioEndpoint: string;
+    publicObjectRelayBaseUrl: string;
 }
 
 export interface BootstrapConfig {

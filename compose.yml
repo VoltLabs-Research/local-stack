@@ -79,6 +79,7 @@ services:
       MONGO_AUTH_SOURCE: admin
       PRODUCTION_DATABASE: voltcloud@production
       DEVELOPMENT_DATABASE: voltcloud@development
+      VOLT_SECRET_ENCRYPTION_KEY: volt-dev-ssh-key
       SSH_ENCRYPTION_KEY: volt-dev-ssh-key
       JWT_EXPIRATION_DAYS: 7d
       SECRET_KEY: volt-dev-secret-key
@@ -128,24 +129,24 @@ services:
     ports:
       - "${VOLT_DEV_WEB_PORT:-5173}:5173"
 
-  storage-mongodb:
+  cluster-mongodb:
     image: mongo:8.0.5
     restart: unless-stopped
     env_file:
-      - ./.generated/clusters/storage/mongodb.env
+      - ./.generated/clusters/cluster/mongodb.env
     healthcheck:
       test: ["CMD-SHELL", "mongosh --quiet --host localhost --username $$MONGO_INITDB_ROOT_USERNAME --password $$MONGO_INITDB_ROOT_PASSWORD --authenticationDatabase admin --eval \"db.adminCommand('ping').ok\" | grep 1"]
       interval: 10s
       timeout: 5s
       retries: 20
     volumes:
-      - storage-mongodb-data:/data/db
+      - cluster-mongodb-data:/data/db
 
-  storage-redis:
+  cluster-redis:
     image: redis:7.4.2-alpine
     restart: unless-stopped
     env_file:
-      - ./.generated/clusters/storage/redis.env
+      - ./.generated/clusters/cluster/redis.env
     command:
       - sh
       - -c
@@ -158,98 +159,43 @@ services:
       timeout: 5s
       retries: 20
     volumes:
-      - storage-redis-data:/data
+      - cluster-redis-data:/data
 
-  storage-minio:
+  cluster-minio:
     image: minio/minio:RELEASE.2025-02-28T09-55-16Z
     restart: unless-stopped
     env_file:
-      - ./.generated/clusters/storage/minio.env
+      - ./.generated/clusters/cluster/minio.env
     command: server /data --console-address ":9001"
+    ports:
+      - "${VOLT_DEV_CLUSTER_MINIO_PORT:-9200}:9000"
     volumes:
-      - storage-minio-data:/data
+      - cluster-minio-data:/data
 
-  storage-daemon:
+  cluster-daemon:
     image: "${VOLT_DEV_CLUSTER_DAEMON_IMAGE}"
     restart: unless-stopped
     env_file:
-      - ./.generated/clusters/storage/daemon.env
-    depends_on:
-      storage-mongodb:
-        condition: service_healthy
-      storage-redis:
-        condition: service_healthy
-      storage-minio:
-        condition: service_started
-      volt-server:
-        condition: service_started
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - "${VOLT_DEV_CLUSTER_DAEMON_MOUNT_SOURCE:-cluster-daemon-app-src}:/app"
-      - storage-daemon-node-modules:/app/node_modules
-
-  compute-mongodb:
-    image: mongo:8.0.5
-    restart: unless-stopped
-    env_file:
-      - ./.generated/clusters/compute/mongodb.env
-    healthcheck:
-      test: ["CMD-SHELL", "mongosh --quiet --host localhost --username $$MONGO_INITDB_ROOT_USERNAME --password $$MONGO_INITDB_ROOT_PASSWORD --authenticationDatabase admin --eval \"db.adminCommand('ping').ok\" | grep 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 20
-    volumes:
-      - compute-mongodb-data:/data/db
-
-  compute-redis:
-    image: redis:7.4.2-alpine
-    restart: unless-stopped
-    env_file:
-      - ./.generated/clusters/compute/redis.env
-    command:
-      - sh
-      - -c
-      - |
-        printf 'user default off\nuser %s on >%s ~* &* +@all\n' "$$REDIS_USERNAME" "$$REDIS_PASSWORD" > /tmp/users.acl
-        exec redis-server --appendonly yes --aclfile /tmp/users.acl
-    healthcheck:
-      test: ["CMD-SHELL", "redis-cli --user $$REDIS_USERNAME --pass $$REDIS_PASSWORD ping | grep PONG"]
-      interval: 10s
-      timeout: 5s
-      retries: 20
-    volumes:
-      - compute-redis-data:/data
-
-  compute-minio:
-    image: minio/minio:RELEASE.2025-02-28T09-55-16Z
-    restart: unless-stopped
-    env_file:
-      - ./.generated/clusters/compute/minio.env
-    command: server /data --console-address ":9001"
-    volumes:
-      - compute-minio-data:/data
-
-  compute-daemon:
-    image: "${VOLT_DEV_CLUSTER_DAEMON_IMAGE}"
-    restart: unless-stopped
-    env_file:
-      - ./.generated/clusters/compute/daemon.env
+      - ./.generated/clusters/cluster/daemon.env
     environment:
-      PLUGIN_PROCESS_POOL_MIN_IDLE: "8"
+      PLUGIN_FRAME_MMAP_DIR: /app/storage/plugin-frames
+      PLUGIN_PROCESS_POOL_MIN_IDLE: "1"
       RESULT_CACHE_DISABLED: "1"
     depends_on:
-      compute-mongodb:
+      cluster-mongodb:
         condition: service_healthy
-      compute-redis:
+      cluster-redis:
         condition: service_healthy
-      compute-minio:
+      cluster-minio:
         condition: service_started
       volt-server:
         condition: service_started
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - "${VOLT_DEV_CLUSTER_DAEMON_MOUNT_SOURCE:-cluster-daemon-app-src}:/app"
-      - compute-daemon-node-modules:/app/node_modules
+      - cluster-daemon-node-modules:/app/node_modules
+    ports:
+      - "${VOLT_DEV_CLUSTER_DAEMON_PORT:-18080}:${VOLT_DEV_CLUSTER_DAEMON_PORT:-18080}"
 
 volumes:
   volt-mongodb-data:
@@ -259,12 +205,8 @@ volumes:
   volt-server-node-modules:
   volt-client-app-src:
   volt-client-node-modules:
-  storage-mongodb-data:
-  storage-redis-data:
-  storage-minio-data:
+  cluster-mongodb-data:
+  cluster-redis-data:
+  cluster-minio-data:
   cluster-daemon-app-src:
-  storage-daemon-node-modules:
-  compute-mongodb-data:
-  compute-redis-data:
-  compute-minio-data:
-  compute-daemon-node-modules:
+  cluster-daemon-node-modules:
